@@ -1,0 +1,84 @@
+.spinner {
+    display: inline;
+    width: 1em;
+    height: 1em;
+    vertical-align: middle;
+}
+
+button, input, select, textarea {
+  font-family: inherit;
+  font-size: 100%;
+}
+
+table {
+  margin: 1em auto;
+  text-align: center;
+}
+
+td {
+  padding: 0.2ex 1ex;
+}
+
+th {
+  position: sticky;
+  top: 2px;
+}
+
+td.date {
+  position:sticky;
+  left: 2px;
+}
+
+.val0 {
+  font-size: 80%;
+}
+
+.val1 {
+  font-weight: bold;
+}
+
+.val5 {
+  font-weight: bold;
+}
+
+body {
+  background: $BG_0_LIGHT;
+  color: $FG_0_LIGHT;
+}
+
+h1, h2 {
+  color: $FG_1_LIGHT;
+}
+
+button, input, select, textarea {
+  background: $BG_1_LIGHT;
+  color: $EMPH_LIGHT;
+}
+
+input[type=button], input[type=submit] {
+  color: $IMPORTANT_LIGHT;
+}
+
+@media (prefers-color-scheme: dark) {
+  #spinnercover, body {
+    background: $BG_0_DARK;
+    color: $FG_0_DARK;
+  }
+
+  h1, h2 {
+    color: $FG_1_DARK;
+  }
+
+  button, input, select, textarea {
+    background: $BG_1_DARK;
+    color: $EMPH_DARK;
+  }
+
+  input[type=button], input[type=submit] {
+    color: $IMPORTANT_DARK;
+  }
+
+  svg.spinner circle {
+    stroke: $FG_1_DARK;
+  }
+}

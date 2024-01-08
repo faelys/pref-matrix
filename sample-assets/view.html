@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width">
+    <title>Plannification JDR</title>
+    <link rel="stylesheet" type="text/css" href="style.css" />
+    <script>
+var val_class=["val0","val1","val2","val3","val4","val5"];
+var val_text=["?","−−","−","0","+","++"];
+
+window.onerror = function(msg, url, line) {
+  var item = document.createElement("li");
+  item.appendChild(document.createTextNode(url + "@" + line + ": " + msg));
+  document.getElementById("error-log").appendChild(item);
+  document.getElementById("error-div").style = "display:block";
+  item.scrollIntoView();
+}
+
+function append_cell(line, type, cl, text) {
+  var elt = document.createElement(type);
+  elt.className = cl;
+  elt.appendChild(document.createTextNode(text));
+  line.appendChild(elt);
+}
+
+function set_table(data) {
+  var holder = document.getElementById("pref-table");
+  while (holder.childNodes.length > 0) {
+    holder.removeChild(holder.childNodes[0]);
+  }
+  var line = document.createElement("tr");
+
+  append_cell(line, "th", "", "Date");
+  for (const name in data[1]) {
+    var elt = document.createElement("th");
+    var link = document.createElement("a");
+    link.href = "edit.html";
+    link.onclick = function() { localStorage.setItem("subject", name); };
+    link.appendChild(document.createTextNode(name));
+    elt.appendChild(link);
+    line.appendChild(elt);
+  }
+  holder.appendChild(line);
+
+  for (const name of data[0]) {
+    line = document.createElement("tr");
+    append_cell(line, "td", "date", name);
+    for (const [tmp, prefs] of Object.entries(data[1])) {
+      var v = prefs[name] || 0;
+      append_cell(line, "td", val_class[v], val_text[v]);
+    }
+    holder.appendChild(line);
+  }
+}
+
+async function reload_table(){
+  document.getElementById("reload-spinner").style = "display:inline";
+  const response = await fetch("all.json", { cache: "no-cache" });
+  const data = await response.json();
+  set_table(data);
+  document.getElementById("reload-spinner").style = "display:none";
+}
+
+async function create_subject(name){
+  document.getElementById("create-spinner").style = "display:inline";
+  const response = await fetch("do/new-subject", {
+    method: "POST",
+    cache: "no-store",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "name=" + encodeURIComponent(name),
+  });
+  if (response.ok) {
+    reload_table();
+    document.getElementById("create-spinner").style = "display:none";
+  }
+
+  return false;
+}
+
+function new_subject(){
+  create_subject(document.getElementById("new-subject").value);
+  document.getElementById("new-subject").value = "";
+  return false;
+}
+    </script>
+  </head>
+  <body onload="reload_table()">
+    <h1>Plannification JDR</h1>
+    <p>Bienvenue sur la page d'organisation des soirés JdR. Cette page présente la vue d'ensemble des préférences. Les préférences peuvent être changées colonne par colonne, en suivant le lien en en-tête de la table. Une nouvelle colonne peut être créée au moyen du formulaire ci-dessous.</p>
+    <form onsubmit="return new_subject()">
+      <p>Nouveau pseudo :
+        <input type="text" name="name" id="new-subject" placeholder="XXX">
+        <input type="submit" name="submit" value="Créer">
+        <img id="create-spinner" class="spinner" src="spinner.svg" style="display: none">
+      </p>
+    </form>
+    <table style="margin: 1em">
+      <tr><td colspan="2" style="text-align: left"><strong>Symboles des préférences :</strong></td></tr>
+      <tr>
+        <td class="val5">++</td>
+        <td style="text-align: left">j'ai très envie de jouer ce soir-là, je vais m'ennuyer autrement</td>
+      </tr>
+      <tr>
+        <td class="val4">+</td>
+        <td style="text-align: left">j'aimerais bien jouer ce soir-là</td>
+      </tr>
+      <tr>
+        <td class="val3">0</td>
+        <td style="text-align: left">je veux bien jouer mais ça ne me dérange pas de ne pas jouer</td>
+      </tr>
+      <tr>
+        <td class="val2">−</td>
+        <td style="text-align: left">je peux jouer ce soir-là mais ça ne m'arrange pas vraiment</td>
+      </tr>
+      <tr>
+        <td class="val1">−−</td>
+        <td style="text-align: left">je ne suis pas du tout disponible ce soir-là</td>
+      </tr>
+      <tr>
+        <td class="val0">?</td>
+        <td style="text-align: left">je ne veux pas me prononcer</td>
+      </tr>
+    </table>
+    <p><input name="test" value="Recharger" type="button" onclick="reload_table()"> <img id="reload-spinner" class="spinner" src="spinner.svg" style="display: none"></p>
+    <table id="pref-table">
+      <tr><th>Chargement</th></tr>
+      <tr><td><img src="spinner.svg" style="display: inline; width: 5em; height: 5em"></td></tr>
+    </table>
+    <div id="error-div" style="display:none">
+      <p>Error log:</p>
+      <ul id="error-log"><ul>
+    </div>
+  </body>
+</html>
