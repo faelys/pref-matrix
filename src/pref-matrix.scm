@@ -318,10 +318,14 @@
 ;; Web API
 
 (define cmd-list '())
+(define (cmd-sleep)
+  (let ((duration (get-config "tarpit" #f)))
+    (when duration (sleep duration))))
 (define-syntax defcmd
   (syntax-rules ()
     ((defcmd name . body)
-      (set! cmd-list (cons (cons (symbol->string 'name) (lambda () . body))
+      (set! cmd-list (cons (cons (symbol->string 'name)
+                                 (lambda () (cmd-sleep) . body))
                            cmd-list)))))
 
 (defcmd new-object
