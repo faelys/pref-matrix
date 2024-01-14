@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width">
+    <title>Planification JDR</title>
+    <link rel="stylesheet" type="text/css" href="style.css" />
+    <script>
+var val_class=["val0","val1","val2","val3","val4","val5"];
+var val_text=["?","−−","−","0","+","++"];
+var all_data=null;
+var radio_map=new Map();
+var spinner_map=new Map();
+var subject=null;
+var sent=null;
+var send_subject=null;
+var outbox=new Map();
+var sender=null;
+var base_timeout=2000;
+var retry_timeout=base_timeout;
+
+window.onerror = function(msg, url, line) {
+  var item = document.createElement("li");
+  item.appendChild(document.createTextNode(url + "@" + line + ": " + msg));
+  document.getElementById("error-log").appendChild(item);
+  document.getElementById("error-div").style = "display:block";
+  item.scrollIntoView();
+}
+
+/************************************/
+/* Asynchronous Push of Preferences */
+/************************************/
+
+async function send(){
+  var req_body = "sub=" + encodeURIComponent(send_subject);
+  sent = outbox.get(send_subject);
+  outbox.delete(send_subject);
+
+  for (const [key, value] of sent) {
+    req_body += "&" + encodeURIComponent(key) + "=" + encodeURIComponent(value);
+  }
+
+  console.log("Start fetch");
+  const response = await fetch("do/set-pref", {
+    method: "POST",
+    cache: "no-store",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: req_body,
+  });
+  console.log("End of fetch");
+
+  var to = base_timeout;
+
+  if (response.ok) {
+    for (const [key, value] of sent) {
+      if (!outbox.has(send_subject) || !outbox.get(send_subject).has(key)) {
+        spinner_map.get(key).style = "display:none";
+      }
+    }
+    retry_timeout = base_timeout;
+
+  } else {
+    if (!outbox.has(send_subject) && sent.size > 0) {
+      outbox.set(send_subject, new Map());
+    }
+
+    for (const [key, value] of sent) {
+      if (!outbox.get(send_subject).has(key)) {
+        outbox.get(send_subject).set(key, value);
+      }
+    }
+    to = retry_timeout;
+    retry_timeout *= 2;
+  }
+
+  sent = null;
+  if (outbox.has(send_subject)) {
+    sender = setTimeout(send, to);
+  } else if (outbox.size > 0) {
+    send_subject = outbox.keys().next().value;
+    sender = setTimeout(send, to);
+  } else {
+    send_subject = null;
+  }
+
+  if (!subject) {
+    reload_data();
+  }
+}
+
+function radio_click(name, value){
+  spinner_map.get(name).style = "display:inline";
+
+  if (!outbox.has(subject)) {
+    outbox.set(subject, new Map());
+  }
+  outbox.get(subject).set(name, value);
+
+  if (!sent) {
+    if (!send_subject) {
+      send_subject = subject;
+    }
+
+    if (sender) {
+      clearTimeout(sender);
+    }
+    sender = setTimeout(send, base_timeout);
+  }
+}
+
+/********************/
+/* Table Generation */
+/********************/
+
+function append_cell(line, type, cl, text) {
+  var elt = document.createElement(type);
+  elt.className = cl;
+  elt.appendChild(document.createTextNode(text));
+  line.appendChild(elt);
+}
+
+function set_overview_table() {
+  var holder = document.getElementById("overview-table");
+  while (holder.childNodes.length > 0) {
+    holder.removeChild(holder.childNodes[0]);
+  }
+  var line = document.createElement("tr");
+
+  append_cell(line, "th", "", "Date");
+  for (const name in all_data[1]) {
+    var elt = document.createElement("th");
+    var link = document.createElement("a");
+    link.href = "#" + encodeURIComponent(name);
+    link.appendChild(document.createTextNode(name));
+    elt.appendChild(link);
+    line.appendChild(elt);
+  }
+  holder.appendChild(line);
+
+  for (const name of all_data[0]) {
+    line = document.createElement("tr");
+    append_cell(line, "td", "date", name);
+    for (const [tmp, prefs] of Object.entries(all_data[1])) {
+      var v = prefs[name] || 0;
+      append_cell(line, "td", val_class[v], val_text[v]);
+    }
+    holder.appendChild(line);
+  }
+}
+
+function set_pref_table() {
+  var holder = document.getElementById("pref-table-body");
+  while (holder.childNodes.length > 0) {
+    holder.removeChild(holder.childNodes[0]);
+  }
+
+  radio_map.clear();
+  spinner_map.clear();
+
+  for (const name of all_data[0]) {
+    var line = document.createElement("tr");
+
+    var cell = document.createElement("td");
+    cell.className = "date";
+    cell.appendChild(document.createTextNode(name));
+    line.appendChild(cell);
+
+    var radios = new Array;
+
+    for (const i in val_text) {
+      cell = document.createElement("td");
+      var elt1 = document.createElement("label");
+      var elt2 = document.createElement("input");
+      elt2.type = "radio";
+      elt2.name = name;
+      elt2.value = i;
+      elt2.onchange = function() { radio_click(name, i) };
+      radios[i] = elt2;
+      elt1.appendChild(elt2);
+      elt1.appendChild(document.createTextNode(val_text[i]));
+      elt1.className = val_class[i];
+      cell.appendChild(elt1);
+      if (i > 0) {
+        line.appendChild(cell);
+      } else {
+        line.insertBefore(cell, line.childNodes[0]);
+      }
+    }
+    radio_map.set(name, radios);
+
+    cell = document.createElement("td");
+    elt1 = document.createElement("img");
+    elt1.className = "spinner";
+    elt1.src = "spinner.svg";
+    elt1.style = "display:none";
+    spinner_map.set(name, elt1);
+    cell.appendChild(elt1);
+    line.appendChild(cell);
+    holder.appendChild(line);
+  }
+
+  for (const [name, radios] of radio_map) {
+    for (const i in val_text) {
+      radios[i].checked = (i == (all_data[1][subject][name] || 0));
+    }
+  }
+}
+
+/*********************/
+/* Page Presentation */
+/*********************/
+
+function redisplay() {
+  var prev_subject = subject;
+  subject = decodeURIComponent(window.location.hash.substring(1));
+  document.getElementById("cur-subject").textContent = subject;
+
+  if (!subject) {
+    document.title = "Planification JDR";
+
+    if (prev_subject) {
+      reload_data();
+    }
+
+    set_overview_table();
+
+    document.getElementById("pref-form").style = "display:none";
+    document.getElementById("change-subject-form").style = "display:none";
+    document.getElementById("overview-link").style = "display:none";
+
+    document.getElementById("overview-table").style = "";
+    document.getElementById("subject-name-label").style = "display:inline";
+    document.getElementById("create-subject-name").type = "text";
+    document.getElementById("create-subject-name").value = "";
+
+    open_change_form();
+
+  } else if (subject in all_data[1]) {
+    set_pref_table();
+
+    document.title = "Planification JDR - " + subject;
+
+    document.getElementById("create-subject").style = "display:none";
+    document.getElementById("overview-table").style = "display:none";
+
+    document.getElementById("pref-form").style = "display:block";
+    document.getElementById("overview-link").style = "display:inline";
+    close_change_form();
+
+  } else {
+    document.title = "Planification JDR - " + subject;
+
+    document.getElementById("pref-form").style = "display:none";
+    document.getElementById("overview-table").style = "display:none";
+
+    document.getElementById("create-subject").style = "display:block";
+    document.getElementById("subject-name-label").style = "display:none";
+    document.getElementById("create-subject-name").value = subject;
+
+    document.getElementById("overview-link").style = "display:inline";
+    close_change_form();
+  }
+}
+
+async function reload_data(){
+  document.getElementById("reload-spinner").style = "display:inline";
+  const response = await fetch("all.json", { cache: "no-cache" });
+  all_data = await response.json();
+
+  redisplay();
+
+  document.getElementById("reload-spinner").style = "display:none";
+}
+
+async function create_subject(){
+  const name = document.getElementById("create-subject-name").value;
+  document.getElementById("create-spinner").style = "display:inline";
+  const response = await fetch("do/new-subject", {
+    method: "POST",
+    cache: "no-store",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "name=" + encodeURIComponent(name),
+  });
+  document.getElementById("create-subject-name").value = "";
+  document.getElementById("create-spinner").style = "display:none";
+
+  if (response.ok) {
+    if (subject !== name) {
+      window.location.hash = "#" + encodeURIComponent(name);
+    }
+    reload_data();
+  }
+}
+
+function set_subject(){
+  window.location.hash = "#" + encodeURIComponent(document.getElementById("new-subject").value);
+  return false;
+}
+
+function close_change_form(){
+  document.getElementById("change-subject-form").style = "display:block";
+  document.getElementById("close-subject").style = "display:none";
+  document.getElementById("cur-subject").style = "display:inline";
+  document.getElementById("new-subject").style = "display:none";
+  document.getElementById("open-subject").style = "display:inline";
+  document.getElementById("set-subject").style = "display:none";
+}
+
+function open_change_form(){
+  document.getElementById("new-subject").value = "";
+  document.getElementById("change-subject-form").style = "display:block";
+  document.getElementById("close-subject").style = "display:inline";
+  document.getElementById("cur-subject").style = "display:none";
+  document.getElementById("new-subject").style = "display:inline";
+  document.getElementById("open-subject").style = "display:none";
+  document.getElementById("set-subject").style = "display:inline";
+}
+
+window.addEventListener("hashchange", redisplay);
+    </script>
+  </head>
+  <body onload="reload_data()">
+    <h1>Planification JDR</h1>
+    <p>
+      <a href="#" id="overview-link">Retour à la vue d'ensemble</a>
+      <input name="test" value="Recharger" type="button" onclick="reload_data()">
+      <img id="reload-spinner" class="spinner" src="spinner.svg" style="display: none">
+    </p>
+    <table style="margin: 1em">
+      <tr><td colspan="2" style="text-align: left"><strong>Symboles des préférences :</strong></td></tr>
+      <tr>
+        <td class="val5">++</td>
+        <td style="text-align: left">j'ai très envie de jouer ce soir-là, je vais m'ennuyer autrement</td>
+      </tr>
+      <tr>
+        <td class="val4">+</td>
+        <td style="text-align: left">j'aimerais bien jouer ce soir-là</td>
+      </tr>
+      <tr>
+        <td class="val3">0</td>
+        <td style="text-align: left">je veux bien jouer mais ça ne me dérange pas de ne pas jouer</td>
+      </tr>
+      <tr>
+        <td class="val2">−</td>
+        <td style="text-align: left">je peux jouer ce soir-là mais ça ne m'arrange pas vraiment</td>
+      </tr>
+      <tr>
+        <td class="val1">−−</td>
+        <td style="text-align: left">je ne suis pas du tout disponible ce soir-là</td>
+      </tr>
+      <tr>
+        <td class="val0">?</td>
+        <td style="text-align: left">je ne veux pas me prononcer</td>
+      </tr>
+    </table>
+    <form id="change-subject-form" style="display:none" onsubmit="return set_subject()">
+      <p>
+        <label>
+          Préferences pour <strong id="cur-subject"></strong><input name="subject" id="new-subject" value="" type="text">
+        </label>
+        <input id="open-subject" name="change" value="Changer" type="button" onclick="open_change_form()">
+        <input id="set-subject" name="submit" value="Valider" type="submit">
+        <input id="close-subject" name="cancel" value="Annuler" type="button" onclick="close_change_form()">
+      </p>
+    </form>
+    <form id="create-subject" style="display:none" onsubmit="create_subject(); return false;">
+      <label id="subject-name-label">Nouveau pseudo :
+        <input id="create-subject-name" type="hidden" value="">
+      </label>
+      <input name="submit" type="submit" value="Créer">
+      <img id="create-spinner" class="spinner" src="spinner.svg" style="display: none">
+    </form>
+    <table id="overview-table">
+      <tr><th>Chargement</th></tr>
+      <tr><td><img src="spinner.svg" style="display: inline; width: 5em; height: 5em"></td></tr>
+    </table>
+    <form id="pref-form" style="display:none">
+      <table>
+        <thead>
+          <tr id="table-header">
+            <th></th>
+            <th>Date</th>
+            <th colspan="5">Préférence</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="pref-table-body">
+          <tr>
+            <td colspan="8">
+              <img src="spinner.svg" with="5em" height"5em">
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </form>
+    <div id="error-div" style="display:none">
+      <p>Error log:</p>
+      <ul id="error-log"><ul>
+    </div>
+  </body>
+</html>
