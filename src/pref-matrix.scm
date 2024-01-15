@@ -95,7 +95,7 @@
 
 (unless trace-port
   (set! trace-call (lambda (x) #f))
-  (set! trafe-comment (lambda (x) #f))
+  (set! trace-comment (lambda (x) #f))
   (set! trace-result (lambda (x y) #f)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
