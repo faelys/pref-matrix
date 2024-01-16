@@ -104,6 +104,8 @@
 (define db
   (open-database (command-line-argument 1 "pref-matrix.sqlite")))
 
+(exec (sql db "PRAGMA foreign_keys = ON;"))
+
 (define (db-version)
   (query fetch-value (sql db "PRAGMA user_version;")))
 
@@ -111,7 +113,6 @@
   (for-each
     (lambda (s) (exec (sql db s)))
     (list "PRAGMA user_version = 1;"
-          "PRAGMA foreign_keys = ON;"
           "PRAGMA journal_mode = wal;"
           "PRAGMA synchronous = normal;"
           "CREATE TABLE config (key TEXT PRIMARY KEY, val);"
