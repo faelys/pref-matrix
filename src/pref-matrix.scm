@@ -276,19 +276,17 @@
 ;         subject-name object-name value))
 
 (define-half-traced (set-subject-pref subject-name alist)
-  (with-transaction db
-    (lambda ()
-      (let ((sub-id (subject-id subject-name)))
-        (for-each
-          (lambda (pair)
-            (exec (sql db "INSERT OR REPLACE INTO pref(sub_id,obj_id,val)
-                           VALUES (?,(SELECT id FROM object WHERE name=?),?);")
-                  sub-id
-                  (if (string? (car pair))
-                      (car pair)
-                      (symbol->string (car pair)))
-                  (string->number (cdr pair))))
-          alist))))
+  (let ((sub-id (subject-id subject-name)))
+    (for-each
+      (lambda (pair)
+        (exec (sql db "INSERT OR REPLACE INTO pref(sub_id,obj_id,val)
+                       VALUES (?,(SELECT id FROM object WHERE name=?),?);")
+              sub-id
+              (if (string? (car pair))
+                  (car pair)
+                  (symbol->string (car pair)))
+              (string->number (cdr pair))))
+      alist))
   (unless replaying? (generate-json)))
 
 ;;;;;;;;;;;
@@ -307,13 +305,13 @@
 (define db-mutex
   (make-mutex "sqlite-db"))
 
-(define-syntax with-mutex
+(define-syntax with-db
   (syntax-rules ()
-    ((with-mutex m . op)
+    ((with-db . op)
       (dynamic-wind
-        (lambda () (mutex-lock! m))
-        (lambda () . op)
-        (lambda () (mutex-unlock! m))))))
+        (lambda () (mutex-lock! db-mutex))
+        (lambda () (with-transaction db (lambda () . op)))
+        (lambda () (mutex-unlock! db-mutex))))))
 
 ;;;;;;;;;;;;
 ;; Web API
@@ -333,7 +331,7 @@
   (let* ((data (read-urlencoded-request-data (current-request)))
          (name (alist-ref 'name data eq? #f)))
     (if name
-        (let ((result (with-mutex db-mutex (new-object name))))
+        (let ((result (with-db (new-object name))))
           (if result
               (send-status 'ok)
               (send-status 'conflict "Name already exists")))
@@ -343,7 +341,7 @@
   (let* ((data (read-urlencoded-request-data (current-request)))
          (name (alist-ref 'name data eq? #f)))
     (if name
-        (let ((result (with-mutex db-mutex (new-subject name))))
+        (let ((result (with-db (new-subject name))))
           (if result
               (send-status 'ok)
               (send-status 'conflict "Name already exists")))
@@ -353,7 +351,7 @@
   (let* ((data (read-urlencoded-request-data (current-request))))
     (if (eq? (caar data) 'sub)
         (begin
-          (with-mutex db-mutex
+          (with-db
             (set-subject-pref
               (cdar data)
               (map
