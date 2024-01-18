@@ -268,26 +268,29 @@
         key
         val))
 
-; (define-half-traced (set-pref subject-name object-name value)
-;   (exec (sql db "INSERT OR REPLACE INTO pref(sub_id,obj_id,val) VALUES
-;                  ((SELECT id FROM subject WHERE name=?),
-;                   (SELECT id FROM object WHERE name=?),
-;                   ?);")
-;         subject-name object-name value))
+(define (set-pref sub-id object-name value)
+  (let ((obj-id (object-id object-name)))
+    (if obj-id
+        (begin
+          (exec (sql db "INSERT OR REPLACE INTO pref(sub_id,obj_id,val)
+                         VALUES (?,?,?);")
+                sub-id
+                obj-id
+                value)
+          (last-insert-rowid db))
+        #f)))
 
-(define-half-traced (set-subject-pref subject-name alist)
+(define-traced (set-subject-pref subject-name alist)
   (let ((sub-id (subject-id subject-name)))
-    (for-each
-      (lambda (pair)
-        (exec (sql db "INSERT OR REPLACE INTO pref(sub_id,obj_id,val)
-                       VALUES (?,(SELECT id FROM object WHERE name=?),?);")
-              sub-id
-              (if (string? (car pair))
-                  (car pair)
-                  (symbol->string (car pair)))
-              (string->number (cdr pair))))
-      alist))
-  (unless replaying? (generate-json)))
+    (if sub-id
+        (let ((result
+          (map
+            (lambda (pair)
+              (set-pref sub-id (car pair) (string->number (cdr pair))))
+            alist)))
+          (unless replaying? (generate-json))
+          result)
+        #f)))
 
 ;;;;;;;;;;;
 ;; Replay
