@@ -62,17 +62,23 @@
       (trace-comment (rfc-3339-local sec))
       (set! trace-prev-time sec))))
 
-(define (trace-call obj)
+(define (trace-call name args)
   (trace-time)
-  (write obj trace-port)
-  (newline trace-port)
+  (write-string "(" #f trace-port)
+  (write name trace-port)
+  (for-each
+    (lambda (arg)
+      (write-string
+        (if (or (string? arg) (number? arg)) " " " '")
+        #f trace-port)
+      (write arg trace-port))
+    args)
+  (write-line ")" trace-port)
   (flush-output trace-port))
 
-(define (trace-result obj result)
+(define (trace-result name args result)
   (trace-time)
-  (write-string ";" 1 trace-port)
-; (write obj trace-port)
-  (write-string " -> " 4 trace-port)
+  (write-string "; -> " #f trace-port)
   (write result trace-port)
   (newline trace-port)
   (flush-output trace-port))
@@ -81,16 +87,16 @@
   (syntax-rules ()
     ((define-half-traced (name . args) . body)
       (define (name . args)
-        (trace-call (list 'name . args))
+        (trace-call 'name (list . args))
         . body))))
 
 (define-syntax define-traced
   (syntax-rules ()
     ((define-traced (name . args) . body)
       (define (name . args)
-        (trace-call (list 'name . args))
+        (trace-call 'name (list . args))
         (let ((result (begin . body)))
-          (trace-result (list 'name . args) result)
+          (trace-result 'name (list . args) result)
           result)))))
 
 (unless trace-port
