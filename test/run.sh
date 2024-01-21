@@ -92,3 +92,13 @@ kill "${SRV_PID}"
 trap 'rm -f ${TO_CLEAN}' EXIT
 
 sqlite3 "${TEST_DB}" .dump | diff -u "${TEST_DIR}/test-2-dump.sql" -
+
+##############################################
+## Test 3: database migration from schema v1
+
+cp -f "${TEST_DIR}/test-2-v1.sqlite" "${TEST_DB}"
+rm -f "${TEST_DB}-shm" "${TEST_DB}-wal"
+"$@" "${TEST_DB}" "${TEST_TRACE}" "${TEST_DIR}/test-3.scm"
+sqlite3 "${TEST_DB}" .dump \
+   | sed "/'default_topic'/d;s/'default'/'TODO'/" \
+   | diff -u "${TEST_DIR}/test-2-dump.sql" -

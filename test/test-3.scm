@@ -1,0 +1,2 @@
+(generate-json)
+(exit)

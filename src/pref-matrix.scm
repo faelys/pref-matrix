@@ -117,24 +117,92 @@
 
 (when (= 0 (db-version))
   (for-each
-    (lambda (s) (exec (sql db s)))
-    (list "PRAGMA user_version = 1;"
+    (lambda (s) (exec (sql/transient db s)))
+    (list "PRAGMA user_version = 2;"
           "PRAGMA journal_mode = wal;"
           "PRAGMA synchronous = normal;"
-          "CREATE TABLE config (key TEXT PRIMARY KEY, val);"
-          "CREATE TABLE subject (id INTEGER PRIMARY KEY, name TEXT NOT NULL);"
-          "CREATE TABLE object (id INTEGER PRIMARY KEY, name TEXT NOT NULL);"
+          "CREATE TABLE config (key TEXT PRIMARY KEY, val ANY);"
+          "CREATE TABLE topic (id INTEGER PRIMARY KEY,
+                               name TEXT NOT NULL,
+                               closed INTEGER NOT NULL DEFAULT 0);"
+          "CREATE TABLE subject (id INTEGER PRIMARY KEY,
+                                 topic_id NOT NULL REFERENCES topic(id)
+                                    ON UPDATE CASCADE ON DELETE CASCADE,
+                                 name TEXT NOT NULL,
+                                 hidden INTEGER NOT NULL DEFAULT 0);"
+          "CREATE TABLE object (id INTEGER PRIMARY KEY,
+                                topic_id NOT NULL REFERENCES topic(id)
+                                   ON UPDATE CASCADE ON DELETE CASCADE,
+                                name TEXT NOT NULL,
+                                hidden INTEGER NOT NULL DEFAULT 0);"
           "CREATE TABLE pref (id INTEGER PRIMARY KEY,
-                              sub_id REFERENCES subject(id)
+                              sub_id NOT NULL REFERENCES subject(id)
                                  ON UPDATE CASCADE ON DELETE CASCADE,
-                              obj_id REFERENCES object(id)
+                              obj_id NOT NULL REFERENCES object(id)
                                  ON UPDATE CASCADE ON DELETE CASCADE,
                               val INTEGER NOT NULL DEFAULT 0);"
-          "CREATE UNIQUE INDEX sub_name ON subject(name);"
-          "CREATE UNIQUE INDEX obj_name ON object(name);"
+          "CREATE UNIQUE INDEX topic_name ON topic(name);"
+          "CREATE UNIQUE INDEX sub_name ON subject(topic_id,name);"
+          "CREATE UNIQUE INDEX obj_name ON object(topic_id,name);"
+          "CREATE INDEX v_sub_name ON subject(topic_id,name) WHERE hidden=0;"
+          "CREATE INDEX v_obj_name ON object(topic_id,name) WHERE hidden=0;"
           "CREATE UNIQUE INDEX sub_obj ON pref(sub_id,obj_id);")))
 
-(assert (= 1 (db-version)))
+(when (= 1 (db-version))
+  (with-transaction db (lambda ()
+    (for-each
+      (lambda (s) (exec (sql/transient db s)))
+      (list "ALTER TABLE config RENAME TO old_config;"
+            "ALTER TABLE subject RENAME TO old_subject;"
+            "ALTER TABLE object RENAME TO old_object;"
+            "ALTER TABLE pref RENAME TO old_pref;"
+            "CREATE TABLE config (key TEXT PRIMARY KEY, val ANY);"
+            "INSERT INTO config(key,val) SELECT key,val FROM old_config;"
+            "INSERT OR IGNORE INTO config(key,val)
+               VALUES ('default_topic','default');"
+            "DROP TABLE old_config;"
+            "CREATE TABLE topic (id INTEGER PRIMARY KEY,
+                               name TEXT NOT NULL,
+                               closed INTEGER NOT NULL DEFAULT 0);"
+            "INSERT INTO topic(id,name)
+               SELECT 1,val FROM config WHERE key='default_topic';"
+            "CREATE TABLE subject (id INTEGER PRIMARY KEY,
+                                 topic_id NOT NULL REFERENCES topic(id)
+                                    ON UPDATE CASCADE ON DELETE CASCADE,
+                                 name TEXT NOT NULL,
+                                 hidden INTEGER NOT NULL DEFAULT 0);"
+            "INSERT INTO subject(id,topic_id,name)
+               SELECT id,1,name FROM old_subject;"
+            "CREATE TABLE object (id INTEGER PRIMARY KEY,
+                                topic_id NOT NULL REFERENCES topic(id)
+                                   ON UPDATE CASCADE ON DELETE CASCADE,
+                                name TEXT NOT NULL,
+                                hidden INTEGER NOT NULL DEFAULT 0);"
+            "INSERT INTO object(id,topic_id,name)
+               SELECT id,1,name FROM old_object;"
+            "CREATE TABLE pref (id INTEGER PRIMARY KEY,
+                              sub_id NOT NULL REFERENCES subject(id)
+                                 ON UPDATE CASCADE ON DELETE CASCADE,
+                              obj_id NOT NULL REFERENCES object(id)
+                                 ON UPDATE CASCADE ON DELETE CASCADE,
+                              val INTEGER NOT NULL DEFAULT 0);"
+            "INSERT INTO pref(id,sub_id,obj_id,val)
+               SELECT id,sub_id,obj_id,val FROM old_pref;"
+            "DROP TABLE old_pref;"
+            "DROP TABLE old_subject;"
+            "DROP TABLE old_object;"
+            "CREATE UNIQUE INDEX topic_name ON topic(name);"
+            "CREATE UNIQUE INDEX sub_name ON subject(topic_id,name);"
+            "CREATE UNIQUE INDEX obj_name ON object(topic_id,name);"
+            "CREATE INDEX v_sub_name ON subject(topic_id,name) WHERE hidden=0;"
+            "CREATE INDEX v_obj_name ON object(topic_id,name) WHERE hidden=0;"
+            "CREATE UNIQUE INDEX sub_obj ON pref(sub_id,obj_id);"
+            "PRAGMA user_version = 2;")))))
+
+(assert (= 2 (db-version)))
+
+(exec (sql/transient db
+  "INSERT OR IGNORE INTO topic(id,name) VALUES (1,'TODO');"))
 
 ;;;;;;;;;;;;;;;;;;;
 ;; Database Query
@@ -252,7 +320,7 @@
                  name))
       #f
       (begin
-        (exec (sql db "INSERT INTO object(name) VALUES (?);") name)
+        (exec (sql db "INSERT INTO object(topic_id,name) VALUES (1,?);") name)
         (let ((result (last-insert-rowid db)))
           (unless replaying? (generate-json))
           result))))
@@ -264,7 +332,7 @@
                  name))
       #f
       (begin
-        (exec (sql db "INSERT INTO subject(name) VALUES (?);") name)
+        (exec (sql db "INSERT INTO subject(topic_id,name) VALUES (1,?);") name)
         (let ((result (last-insert-rowid db)))
           (unless replaying? (generate-json))
           result))))
