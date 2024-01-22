@@ -201,9 +201,6 @@
 
 (assert (= 2 (db-version)))
 
-(exec (sql/transient db
-  "INSERT OR IGNORE INTO topic(id,name) VALUES (1,'TODO');"))
-
 ;;;;;;;;;;;;;;;;;;;
 ;; Database Query
 
@@ -213,27 +210,56 @@
                        key)))
     (if result result default-value)))
 
-(define (object-id name)
-  (query fetch-value (sql db "SELECT id FROM object WHERE name=?;") name))
+(define (topic-file-name tid)
+  (query fetch-value (sql db "SELECT name FROM topic WHERE id=?;") tid))
 
-(define (object-list)
-  (query (map-rows car) (sql db "SELECT name FROM object ORDER BY name;")))
+(define (topic-id name)
+  (query fetch-value (sql db "SELECT id FROM topic WHERE name=?;") name))
 
-(define (subject-id name)
-  (query fetch-value (sql db "SELECT id FROM subject WHERE name=?;") name))
+(define (writable-topic-id name)
+  (let* ((resolved-name (if name name (get-config "default_topic" #f)))
+         (row (if resolved-name
+                  (query fetch-row
+                         (sql db "SELECT id,closed FROM topic WHERE name=?;")
+                         resolved-name)
+                  '())))
+    (if (and (not (null? row)) (zero? (cadr row)))
+        (car row)
+        #f)))
 
-(define (subject-list)
-  (query (map-rows car) (sql db "SELECT name FROM subject ORDER BY name;")))
+(define (topic-id-list)
+  (query (map-rows car) (sql db "SELECT id FROM topic;")))
 
-(define (subject-pref name start limit)
+(define (object-id tid name)
+  (query fetch-value
+         (sql db "SELECT id FROM object WHERE topic_id=? AND name=?;")
+         tid
+         name))
+
+(define (object-list tid)
+  (query (map-rows car)
+         (sql db "SELECT name FROM object WHERE topic_id=? ORDER BY name;")
+         tid))
+
+(define (subject-id tid name)
+  (query fetch-value
+         (sql db "SELECT id FROM subject WHERE topic_id=? AND name=?;")
+         tid
+         name))
+
+(define (subject-list tid)
+  (query (map-rows car)
+         (sql db "SELECT name FROM subject WHERE topic_id=? ORDER BY name;")
+         tid))
+
+(define (subject-pref tid name)
   (query fetch-rows
          (sql db "SELECT object.name,val FROM pref
                     OUTER LEFT JOIN object ON object.id = obj_id
                     OUTER LEFT JOIN subject ON subject.id = sub_id
-                  WHERE subject.name=?
-                  ORDER BY object.name
-                  LIMIT ?,?;")
-         name start limit))
+                  WHERE subject.topic_id=? AND subject.name=?
+                  ORDER BY object.name")
+         tid name))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Data File Generation
@@ -274,10 +300,15 @@
     ("\""   . "\\\"")
     ("\\"   . "\\\\")))
 
+(define valid-file-name-irregex
+  (sre->irregex '(+ (or alphanumeric "-" "_"))))
+(define (valid-file-name? name)
+  (irregex-match? valid-file-name-irregex name))
+
 (define (json-escape raw-str)
   (string-translate* raw-str json-escape-map))
 
-(define (subject-json name)
+(define (subject-json tid name)
   (string-append
     "{"
     (string-intersperse
@@ -286,64 +317,80 @@
                             (json-escape (car row))
                             "\":"
                             (number->string (cadr row))))
-           (subject-pref name 0 -1))
+           (subject-pref tid name))
       ",")
     "}"))
 
-(define (all-json)
+(define (topic-json tid)
   (string-append
     "[[\""
-    (string-intersperse (map json-escape (object-list)) "\",\"")
+    (string-intersperse (map json-escape (object-list tid)) "\",\"")
     "\"],{"
     (string-intersperse
       (map
         (lambda (name)
-          (string-append "\"" (json-escape name) "\":" (subject-json name)))
-        (subject-list))
+          (string-append "\""
+                         (json-escape name)
+                         "\":"
+                         (subject-json tid name)))
+        (subject-list tid))
       ",")
     "}]"))
 
+(define (generate-topic-json tid)
+  (let ((name (topic-file-name tid)))
+    (when (valid-file-name? name)
+      (with-output-to-file
+        (string-append
+          (get-config "json-prefix" "")
+          name
+          ".json")
+        (lambda () (write-string (topic-json tid)))))))
+
 (define (generate-json)
-  (with-output-to-file
-    (string-append
-      (get-config "json-prefix" "")
-      "all.json")
-    (lambda () (write-string (all-json)))))
+  (for-each generate-topic-json (topic-id-list)))
 
 ;;;;;;;;;;;;;;;;;;;;;
 ;; Database Updates
 
-(define-traced (new-object name)
-  (if (or (zero? (string-length name))
-          (query fetch-value
-                 (sql db "SELECT id FROM object WHERE name=?;")
-                 name))
+(define-traced (new-topic name)
+  (if (or (zero? (string-length name)) (topic-id name))
       #f
       (begin
-        (exec (sql db "INSERT INTO object(topic_id,name) VALUES (1,?);") name)
+        (exec (sql db "INSERT INTO topic(name) VALUES (?);") name)
         (let ((result (last-insert-rowid db)))
-          (unless replaying? (generate-json))
+          (unless replaying? (generate-topic-json result))
           result))))
 
-(define-traced (new-subject name)
-  (if (or (zero? (string-length name))
-          (query fetch-value
-                 (sql db "SELECT id FROM subject WHERE name=?;")
-                 name))
-      #f
-      (begin
-        (exec (sql db "INSERT INTO subject(topic_id,name) VALUES (1,?);") name)
-        (let ((result (last-insert-rowid db)))
-          (unless replaying? (generate-json))
-          result))))
+(define-traced (new-object topic name)
+  (let ((tid (writable-topic-id topic)))
+    (if (or (not tid) (zero? (string-length name)) (object-id tid name))
+        #f
+        (begin
+          (exec (sql db "INSERT INTO object(topic_id,name) VALUES (?,?);")
+                tid name)
+          (let ((result (last-insert-rowid db)))
+            (unless replaying? (generate-topic-json tid))
+            result)))))
+
+(define-traced (new-subject topic name)
+  (let ((tid (writable-topic-id topic)))
+    (if (or (not tid) (zero? (string-length name)) (subject-id tid name))
+        #f
+        (begin
+          (exec (sql db "INSERT INTO subject(topic_id,name) VALUES (?,?);")
+                tid name)
+          (let ((result (last-insert-rowid db)))
+            (unless replaying? (generate-topic-json tid))
+            result)))))
 
 (define-half-traced (set-config key val)
   (exec (sql db "INSERT OR REPLACE INTO config(key,val) VALUES (?,?);")
         key
         val))
 
-(define (set-pref sub-id object-name value)
-  (let ((obj-id (object-id object-name)))
+(define (set-pref tid sub-id object-name value)
+  (let ((obj-id (object-id tid object-name)))
     (if obj-id
         (begin
           (exec (sql db "INSERT OR REPLACE INTO pref(sub_id,obj_id,val)
@@ -354,15 +401,16 @@
           (last-insert-rowid db))
         #f)))
 
-(define-traced (set-subject-pref subject-name alist)
-  (let ((sub-id (subject-id subject-name)))
+(define-traced (set-subject-pref topic-name subject-name alist)
+  (let* ((tid (writable-topic-id topic-name))
+         (sub-id (if tid (subject-id tid subject-name) #f)))
     (if sub-id
         (let ((result
           (map
             (lambda (pair)
-              (set-pref sub-id (car pair) (string->number (cdr pair))))
+              (set-pref tid sub-id (car pair) (string->number (cdr pair))))
             alist)))
-          (unless replaying? (generate-json))
+          (unless replaying? (generate-topic-json tid))
           result)
         #f)))
 
@@ -404,11 +452,22 @@
                                  (lambda () (cmd-sleep) . body))
                            cmd-list)))))
 
-(defcmd new-object
+(defcmd new-topic
   (let* ((data (read-urlencoded-request-data (current-request)))
          (name (alist-ref 'name data eq? #f)))
     (if name
-        (let ((result (with-db (new-object name))))
+        (let ((result (with-db (new-topic name))))
+          (if result
+              (send-status 'ok)
+              (send-status 'conflict "Name already exists")))
+        (send-status 'bad-request "Missing parameter"))))
+
+(defcmd new-object
+  (let* ((data (read-urlencoded-request-data (current-request)))
+         (topic (alist-ref 'topic data eq? #f))
+         (name  (alist-ref 'name  data eq? #f)))
+    (if name
+        (let ((result (with-db (new-object topic name))))
           (if result
               (send-status 'ok)
               (send-status 'conflict "Name already exists")))
@@ -416,20 +475,24 @@
 
 (defcmd new-subject
   (let* ((data (read-urlencoded-request-data (current-request)))
-         (name (alist-ref 'name data eq? #f)))
+         (topic (alist-ref 'topic data eq? #f))
+         (name  (alist-ref 'name  data eq? #f)))
     (if name
-        (let ((result (with-db (new-subject name))))
+        (let ((result (with-db (new-subject topic name))))
           (if result
               (send-status 'ok)
               (send-status 'conflict "Name already exists")))
         (send-status 'bad-request "Missing parameter"))))
 
 (defcmd set-pref
-  (let* ((data (read-urlencoded-request-data (current-request))))
+  (let* ((all-data (read-urlencoded-request-data (current-request)))
+         (topic (if (eq? (caar all-data) 'topic) (cdar all-data) #f))
+         (data  (if topic (cdr all-data) all-data)))
     (if (eq? (caar data) 'sub)
         (begin
           (with-db
             (set-subject-pref
+              topic
               (cdar data)
               (map
                 (lambda (pair) (cons (symbol->string (car pair)) (cdr pair)))

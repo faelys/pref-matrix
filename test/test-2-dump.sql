@@ -3,10 +3,11 @@ BEGIN TRANSACTION;
 CREATE TABLE config (key TEXT PRIMARY KEY, val ANY);
 INSERT INTO config VALUES('json-prefix','test-');
 INSERT INTO config VALUES('server-port',9090);
+INSERT INTO config VALUES('default_topic','default');
 CREATE TABLE topic (id INTEGER PRIMARY KEY,
                                name TEXT NOT NULL,
                                closed INTEGER NOT NULL DEFAULT 0);
-INSERT INTO topic VALUES(1,'TODO',0);
+INSERT INTO topic VALUES(1,'default',0);
 CREATE TABLE subject (id INTEGER PRIMARY KEY,
                                  topic_id NOT NULL REFERENCES topic(id)
                                     ON UPDATE CASCADE ON DELETE CASCADE,
