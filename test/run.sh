@@ -30,7 +30,7 @@ trap 'rm -f ${TO_CLEAN}' EXIT
 
 if test -z "${TEST_DB-}"; then
 	TEST_DB="$(mktemp "${TMP_DIR}/pref-matrix-test.XXXXXXXX")"
-	TO_CLEAN="${TO_CLEAN} ${TEST_DB}*"
+	TO_CLEAN="${TO_CLEAN} ${TEST_DB} ${TEST_DB}-shm ${TEST_DB}-wal"
 fi
 
 if test -z "${TEST_TRACE-}"; then
@@ -38,18 +38,42 @@ if test -z "${TEST_TRACE-}"; then
 	TO_CLEAN="${TO_CLEAN} ${TEST_TRACE}"
 fi
 
+do_post(){
+	URI_PATH="$1"
+	EXPECTED_CODE="$2"
+	shift 2
+	echo "; POST ${URI_PATH} <- $*" >>"${TEST_TRACE}"
+
+	RESULT=$(curl -s "$@" "http://localhost:9090${URI_PATH}" \
+	    | tee -a "${TEST_TRACE}" \
+	    | sed -n -e '/^; POST/{;s/^.*//;x;}' \
+	             -e 's/.*title>\([0-9][0-9][0-9]\) - .*/\1/p')
+
+	if ! test "${EXPECTED_CODE}" = "${RESULT}"; then
+		echo "POST ${URI_PATH} <- $*"
+		echo "  returned ${RESULT}, expected ${EXPECTED_CODE}"
+		false
+	fi
+}
+
+check_text(){
+	diff -u "${TEST_DIR}/$1" "$2"
+}
+
+
 ###################
 ## Test 1: replay
 
 echo -n "" >|"${TEST_TRACE}"
 "$@" :memory: "${TEST_TRACE}" "${TEST_DIR}/test-1.scm"
 sed '/; 2[0-9][0-9][0-9]-/d;$s/$/\n(generate-json)\n(exit)/' "${TEST_TRACE}" \
-    | diff -u "${TEST_DIR}/test-1.scm" -
-diff -u "${TEST_DIR}/test-1.json" test-default.json
+    | check_text test-1.scm -
+check_text test-1.json test-default.json
 
 ####################################
 ## Test 2: HTTP with default topic
 
+rm -f "${TEST_DB}" "${TEST_DB}-shm" "${TEST_DB}-wal"
 "$@" "${TEST_DB}" "${TEST_TRACE}" "${TEST_DIR}/test-2.scm" &
 SRV_PID=$!
 
@@ -57,41 +81,37 @@ trap 'rm -f ${TO_CLEAN}; kill ${SRV_PID}' EXIT
 
 sleep 1
 
-curl -s -d 'name=foo' 'http://localhost:9090/new-subject' >>"${TEST_TRACE}"
-diff -u "${TEST_DIR}/test-2-01.json" test-default.json
-curl -s -d 'name=01' 'http://localhost:9090/new-object' >>"${TEST_TRACE}"
-diff -u "${TEST_DIR}/test-2-02.json" test-default.json
-curl -s -d 'name=03' 'http://localhost:9090/new-object' >>"${TEST_TRACE}"
-diff -u "${TEST_DIR}/test-2-03.json" test-default.json
-curl -s -d 'name=bar' 'http://localhost:9090/new-subject' >>"${TEST_TRACE}"
-diff -u "${TEST_DIR}/test-2-04.json" test-default.json
-curl -s -d 'sub=bar' -d '01=3' -d '04=4' \
-     'http://localhost:9090/bin/set-pref' >>"${TEST_TRACE}"
-diff -u "${TEST_DIR}/test-2-05.json" test-default.json
-curl -s -d 'name=02' 'http://localhost:9090/do/new-object' >>"${TEST_TRACE}"
-diff -u "${TEST_DIR}/test-2-06.json" test-default.json
-curl -s -d 'name=bar' 'http://localhost:9090/new-subject' >>"${TEST_TRACE}"
-diff -u "${TEST_DIR}/test-2-06.json" test-default.json
-curl -s -d 'name=04' 'http://localhost:9090/new-object' >>"${TEST_TRACE}"
-diff -u "${TEST_DIR}/test-2-07.json" test-default.json
-curl -s -d 'sub=meow' -d '04=2' -d '01=4' \
-     'http://localhost:9090/set-pref' >>"${TEST_TRACE}"
-diff -u "${TEST_DIR}/test-2-07.json" test-default.json
-curl -s -d 'name=meow' 'http://localhost:9090/new-subject' >>"${TEST_TRACE}"
-diff -u "${TEST_DIR}/test-2-08.json" test-default.json
-curl -s -d 'sub=foo' -d '01=1' -d '04=2' -d '01=4' \
-     'http://localhost:9090/set-pref' >>"${TEST_TRACE}"
-diff -u "${TEST_DIR}/test-2-09.json" test-default.json
-curl -s -d 'sub=bar' -d '01=0' \
-     'http://localhost:9090/set-pref' >>"${TEST_TRACE}"
-diff -u "${TEST_DIR}/test-2-10.json" test-default.json
-curl -s -d 'name=04' 'http://localhost:9090/new-object' >>"${TEST_TRACE}"
-diff -u "${TEST_DIR}/test-2-10.json" test-default.json
+do_post '/new-subject' 200 -d 'name=foo'
+check_text test-2-01.json test-default.json
+do_post '/new-object' 200 -d 'name=01'
+check_text test-2-02.json test-default.json
+do_post '/new-object' 200 -d 'name=03'
+check_text test-2-03.json test-default.json
+do_post '/new-subject' 200 -d 'name=bar'
+check_text test-2-04.json test-default.json
+do_post '/bin/set-pref' 200 -d 'sub=bar' -d '01=3' -d '04=4'
+check_text test-2-05.json test-default.json
+do_post '/do/new-object' 200 -d 'name=02'
+check_text test-2-06.json test-default.json
+do_post '/new-subject' 409 -d 'name=bar'
+check_text test-2-06.json test-default.json
+do_post '/new-object' 200 -d 'name=04'
+check_text test-2-07.json test-default.json
+do_post '/set-pref' 200 -d 'sub=meow' -d '04=2' -d '01=4'
+check_text test-2-07.json test-default.json
+do_post '/new-subject' 200 -d 'name=meow'
+check_text test-2-08.json test-default.json
+do_post '/set-pref' 200 -d 'sub=foo' -d '01=1' -d '04=2' -d '01=4'
+check_text test-2-09.json test-default.json
+do_post '/set-pref' 200 -d 'sub=bar' -d '01=0'
+check_text test-2-10.json test-default.json
+do_post '/new-object' 409 -d 'name=04'
+check_text test-2-10.json test-default.json
 
 kill "${SRV_PID}"
 trap 'rm -f ${TO_CLEAN}' EXIT
 
-sqlite3 "${TEST_DB}" .dump | diff -u "${TEST_DIR}/test-2-dump.sql" -
+sqlite3 "${TEST_DB}" .dump | check_text test-2-dump.sql -
 
 ##############################################
 ## Test 3: database migration from schema v1
@@ -99,5 +119,4 @@ sqlite3 "${TEST_DB}" .dump | diff -u "${TEST_DIR}/test-2-dump.sql" -
 cp -f "${TEST_DIR}/test-2-v1.sqlite" "${TEST_DB}"
 rm -f "${TEST_DB}-shm" "${TEST_DB}-wal"
 "$@" "${TEST_DB}" "${TEST_TRACE}" "${TEST_DIR}/test-3.scm"
-sqlite3 "${TEST_DB}" .dump \
-   | diff -u "${TEST_DIR}/test-2-dump.sql" -
+sqlite3 "${TEST_DB}" .dump | check_text test-2-dump.sql -
