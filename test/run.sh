@@ -24,7 +24,7 @@ fi
 : "${TEST_DIR:=$(dirname "$0")}"
 : "${TMP_DIR:=/tmp}"
 
-TO_CLEAN="test-default.json"
+TO_CLEAN="test-default.json test-one.json test-two.json"
 
 trap 'rm -f ${TO_CLEAN}' EXIT
 
@@ -120,3 +120,80 @@ cp -f "${TEST_DIR}/test-2-v1.sqlite" "${TEST_DB}"
 rm -f "${TEST_DB}-shm" "${TEST_DB}-wal"
 "$@" "${TEST_DB}" "${TEST_TRACE}" "${TEST_DIR}/test-3.scm"
 sqlite3 "${TEST_DB}" .dump | check_text test-2-dump.sql -
+
+#####################################
+## Test 4: HTTP with several topics
+
+rm -f test-default.json test-one.json test-two.json
+"$@" :memory: "${TEST_TRACE}" "${TEST_DIR}/test-4.scm" &
+SRV_PID=$!
+
+trap 'rm -f ${TO_CLEAN}; kill ${SRV_PID}' EXIT
+
+sleep 1
+
+do_post '/new-topic' 200 -d 'name=one'
+check_text test-4-1a.json test-one.json
+! test -e test-two.json
+do_post '/new-topic' 200 -d 'name=two'
+check_text test-4-1a.json test-one.json
+check_text test-4-1b.json test-two.json
+do_post '/new-topic' 409 -d 'name=two'
+check_text test-4-1a.json test-one.json
+check_text test-4-1b.json test-two.json
+do_post '/new-subject' 409 -d 'name=foo'
+check_text test-4-1a.json test-one.json
+check_text test-4-1b.json test-two.json
+! test -e test-default.json
+do_post '/new-subject' 200 -d 'topic=one' -d 'name=foo'
+check_text test-4-2a.json test-one.json
+check_text test-4-1b.json test-two.json
+do_post '/new-subject' 200 -d 'topic=two' -d 'name=foo'
+check_text test-4-2a.json test-one.json
+check_text test-4-2b.json test-two.json
+do_post '/new-subject' 409 -d 'topic=one' -d 'name=foo'
+check_text test-4-2a.json test-one.json
+check_text test-4-2b.json test-two.json
+do_post '/new-subject' 409 -d 'topic=other' -d 'name=bar'
+check_text test-4-2a.json test-one.json
+check_text test-4-2b.json test-two.json
+! test -e test-other.json
+do_post '/new-object' 200 -d 'topic=one' -d 'name=some'
+check_text test-4-3a.json test-one.json
+check_text test-4-2b.json test-two.json
+do_post '/new-object' 200 -d 'topic=one' -d 'name=common'
+check_text test-4-4a.json test-one.json
+check_text test-4-2b.json test-two.json
+do_post '/new-object' 200 -d 'topic=two' -d 'name=common'
+check_text test-4-4a.json test-one.json
+check_text test-4-3b.json test-two.json
+do_post '/new-object' 200 -d 'topic=two' -d 'name=thing'
+check_text test-4-4a.json test-one.json
+check_text test-4-4b.json test-two.json
+do_post '/new-subject' 200 -d 'topic=one' -d 'name=bar'
+check_text test-4-5a.json test-one.json
+check_text test-4-4b.json test-two.json
+do_post '/new-subject' 200 -d 'topic=two' -d 'name=baz'
+check_text test-4-5a.json test-one.json
+check_text test-4-5b.json test-two.json
+do_post '/set-pref' 200 -d 'topic=one' -d 'sub=foo' -d 'some=4' -d 'common=3'
+check_text test-4-6a.json test-one.json
+check_text test-4-5b.json test-two.json
+do_post '/set-pref' 200 -d 'topic=two' -d 'sub=foo' -d 'thing=2' -d 'common=1'
+check_text test-4-6a.json test-one.json
+check_text test-4-6b.json test-two.json
+do_post '/set-pref' 200 -d 'topic=one' -d 'sub=baz' -d 'some=4' -d 'common=3'
+check_text test-4-6a.json test-one.json
+check_text test-4-6b.json test-two.json
+do_post '/set-pref' 200 -d 'topic=two' -d 'sub=bar' -d 'thing=2' -d 'common=1'
+check_text test-4-6a.json test-one.json
+check_text test-4-6b.json test-two.json
+do_post '/set-pref' 200 -d 'topic=two' -d 'sub=baz' -d 'some=4' -d 'common=5'
+check_text test-4-6a.json test-one.json
+check_text test-4-7b.json test-two.json
+do_post '/set-pref' 200 -d 'topic=one' -d 'sub=bar' -d 'thing=2' -d 'common=5'
+check_text test-4-7a.json test-one.json
+check_text test-4-7b.json test-two.json
+
+kill "${SRV_PID}"
+trap 'rm -f ${TO_CLEAN}' EXIT
