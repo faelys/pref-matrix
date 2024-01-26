@@ -238,7 +238,8 @@
 
 (define (object-list tid)
   (query (map-rows car)
-         (sql db "SELECT name FROM object WHERE topic_id=? ORDER BY name;")
+         (sql db "SELECT name FROM object
+                  WHERE topic_id=? AND hidden=0 ORDER BY name;")
          tid))
 
 (define (subject-id tid name)
@@ -249,7 +250,8 @@
 
 (define (subject-list tid)
   (query (map-rows car)
-         (sql db "SELECT name FROM subject WHERE topic_id=? ORDER BY name;")
+         (sql db "SELECT name FROM subject
+                  WHERE topic_id=? AND hidden=0 ORDER BY name;")
          tid))
 
 (define (subject-pref tid name)
@@ -258,6 +260,7 @@
                     OUTER LEFT JOIN object ON object.id = obj_id
                     OUTER LEFT JOIN subject ON subject.id = sub_id
                   WHERE subject.topic_id=? AND subject.name=?
+                    AND object.hidden=0
                   ORDER BY object.name")
          tid name))
 
@@ -364,25 +367,63 @@
 
 (define-traced (new-object topic name)
   (let ((tid (writable-topic-id topic)))
-    (if (or (not tid) (zero? (string-length name)) (object-id tid name))
+    (if (or (not tid) (zero? (string-length name)))
         #f
-        (begin
-          (exec (sql db "INSERT INTO object(topic_id,name) VALUES (?,?);")
-                tid name)
-          (let ((result (last-insert-rowid db)))
-            (unless replaying? (generate-topic-json tid))
-            result)))))
+        (let ((row (query fetch-row
+                          (sql db "SELECT id,hidden FROM object
+                                   WHERE topic_id=? AND name=?;")
+                          tid
+                          name)))
+          (cond ((null? row)
+                  (exec
+                    (sql db "INSERT INTO object(topic_id,name) VALUES (?,?);")
+                    tid name)
+                  (let ((result (last-insert-rowid db)))
+                    (unless replaying? (generate-topic-json tid))
+                    result))
+                ((zero? (cadr row)) #f)
+                (else
+                  (exec (sql db "UPDATE object SET hidden=0 WHERE id=?;")
+                        (car row))
+                  (unless replaying? (generate-topic-json tid))
+                  (car row)))))))
+
+(define-half-traced (hide-object topic name)
+  (let* ((tid (writable-topic-id topic))
+         (oid (if tid (object-id tid name) #f)))
+    (when oid
+      (exec (sql db "UPDATE object SET hidden=1 WHERE id=?;") oid)
+      (unless replaying? (generate-topic-json tid)))))
 
 (define-traced (new-subject topic name)
   (let ((tid (writable-topic-id topic)))
-    (if (or (not tid) (zero? (string-length name)) (subject-id tid name))
+    (if (or (not tid) (zero? (string-length name)))
         #f
-        (begin
-          (exec (sql db "INSERT INTO subject(topic_id,name) VALUES (?,?);")
-                tid name)
-          (let ((result (last-insert-rowid db)))
-            (unless replaying? (generate-topic-json tid))
-            result)))))
+        (let ((row (query fetch-row
+                          (sql db "SELECT id,hidden FROM subject
+                                   WHERE topic_id=? AND name=?;")
+                          tid
+                          name)))
+          (cond ((null? row)
+                  (exec
+                    (sql db "INSERT INTO subject(topic_id,name) VALUES (?,?);")
+                    tid name)
+                  (let ((result (last-insert-rowid db)))
+                    (unless replaying? (generate-topic-json tid))
+                    result))
+                ((zero? (cadr row)) #f)
+                (else
+                  (exec (sql db "UPDATE subject SET hidden=0 WHERE id=?;")
+                        (car row))
+                  (unless replaying? (generate-topic-json tid))
+                  (car row)))))))
+
+(define-half-traced (hide-subject topic name)
+  (let* ((tid (writable-topic-id topic))
+         (sid (if tid (subject-id tid name) #f)))
+    (when sid
+      (exec (sql db "UPDATE subject SET hidden=1 WHERE id=?;") sid)
+      (unless replaying? (generate-topic-json tid)))))
 
 (define-half-traced (set-config key val)
   (exec (sql db "INSERT OR REPLACE INTO config(key,val) VALUES (?,?);")
@@ -451,6 +492,26 @@
       (set! cmd-list (cons (cons (symbol->string 'name)
                                  (lambda () (cmd-sleep) . body))
                            cmd-list)))))
+
+(defcmd hide-object
+  (let* ((data (read-urlencoded-request-data (current-request)))
+         (topic (alist-ref 'topic data eq? #f))
+         (name  (alist-ref 'name  data eq? #f)))
+    (if name
+        (begin
+          (with-db (hide-object topic name))
+          (send-status 'ok))
+        (send-status 'bad-request "Missing parameter"))))
+
+(defcmd hide-subject
+  (let* ((data (read-urlencoded-request-data (current-request)))
+         (topic (alist-ref 'topic data eq? #f))
+         (name  (alist-ref 'name  data eq? #f)))
+    (if name
+        (begin
+          (with-db (hide-subject topic name))
+          (send-status 'ok))
+        (send-status 'bad-request "Missing parameter"))))
 
 (defcmd new-topic
   (let* ((data (read-urlencoded-request-data (current-request)))
