@@ -365,6 +365,14 @@
           (unless replaying? (generate-topic-json result))
           result))))
 
+(define-traced (close-topic name n)
+  (let ((tid (topic-id name)))
+    (if tid
+        (begin
+          (exec (sql db "UPDATE topic SET closed=? WHERE id=?") n tid)
+          tid)
+        #f)))
+
 (define-traced (new-object topic name)
   (let ((tid (writable-topic-id topic)))
     (if (or (not tid) (zero? (string-length name)))
@@ -492,6 +500,16 @@
       (set! cmd-list (cons (cons (symbol->string 'name)
                                  (lambda () (cmd-sleep) . body))
                            cmd-list)))))
+
+(defcmd close-topic
+  (let* ((data (read-urlencoded-request-data (current-request)))
+         (name (alist-ref 'name data eq? #f)))
+    (if name
+        (let ((result (with-db (close-topic name 1))))
+          (if result
+              (send-status 'ok)
+              (send-status 'bad-request "Name not found")))
+        (send-status 'bad-request "Missing parameter"))))
 
 (defcmd hide-object
   (let* ((data (read-urlencoded-request-data (current-request)))

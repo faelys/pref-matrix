@@ -209,6 +209,18 @@ check_text test-4-7b.json test-two.json
 do_post '/new-subject' 200 -d 'topic=one' -d 'name=foo'
 check_text test-4-7a.json test-one.json
 check_text test-4-7b.json test-two.json
+do_post '/close-topic' 200 -d 'name=one'
+check_text test-4-7a.json test-one.json
+check_text test-4-7b.json test-two.json
+do_post '/set-pref' 200 -d 'topic=two' -d 'sub=foo' -d 'common=5'
+check_text test-4-7a.json test-one.json
+check_text test-4-9b.json test-two.json
+do_post '/set-pref' 200 -d 'topic=one' -d 'sub=foo' -d 'common=5'
+check_text test-4-7a.json test-one.json
+check_text test-4-9b.json test-two.json
+do_post '/new-subject' 409 -d 'topic=one' -d 'name=extra'
+check_text test-4-7a.json test-one.json
+check_text test-4-9b.json test-two.json
 
 kill "${SRV_PID}"
 trap 'rm -f ${TO_CLEAN}' EXIT
