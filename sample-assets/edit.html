@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width">
-    <title>Plannification JDR</title>
+    <title>Planification JDR</title>
     <link rel="stylesheet" type="text/css" href="style.css" />
     <script>
 var val_class=["val0","val1","val2","val3","val4","val5"];
@@ -26,8 +26,17 @@ window.onerror = function(msg, url, line) {
   item.scrollIntoView();
 }
 
+function pathname_to_topic(str) {
+  var components = str.split("/");
+  var fileName = components[components.length - 1];
+  var lastDotIndex = fileName.lastIndexOf("-");
+  return lastDotIndex !== -1 ? fileName.substring(0, lastDotIndex) : "";
+}
+
+var topic=pathname_to_topic(window.location.pathname);
+
 async function send(){
-  var req_body = "sub=" + encodeURIComponent(subject);
+  var req_body = (topic ? "topic=" + encodeURIComponent(topic) + "&" : "") + "sub=" + encodeURIComponent(subject);
   for (const [key, value] of outbox) {
     req_body += "&" + encodeURIComponent(key) + "=" + encodeURIComponent(value);
   }
@@ -147,8 +156,9 @@ function activate_subject(){
 }
 
 async function reload_data(){
+  document.getElementById("back-link").href = (topic ? topic + "-" : "") + "view.html";
   document.getElementById("reload-spinner").style = "display:inline";
-  const response = await fetch("all.json", { cache: "no-cache" });
+  const response = await fetch((topic || "all") + ".json", { cache: "no-cache" });
   all_data = await response.json();
 
   var holder = document.getElementById("pref-table-body");
@@ -168,7 +178,7 @@ async function reload_data(){
     holder.appendChild(new_table_line(name));
   }
 
-  subject = localStorage.getItem("subject");
+  subject = localStorage.getItem("subject" + (topic ? "-" + topic : ""));
   activate_subject();
 
   document.getElementById("reload-spinner").style = "display:none";
@@ -180,7 +190,7 @@ async function create_subject(){
     method: "POST",
     cache: "no-store",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: "name=" + encodeURIComponent(subject),
+    body: (topic ? "topic=" + encodeURIComponent(topic) + "&" : "") + "name=" + encodeURIComponent(subject),
   });
   document.getElementById("create-spinner").style = "display:none";
 
@@ -192,7 +202,7 @@ async function create_subject(){
 
 function set_subject(){
   subject = document.getElementById("set-subject").value;
-  localStorage.setItem("subject", subject);
+  localStorage.setItem("subject" + (topic ? "-" + topic : ""), subject);
   activate_subject();
   return false;
 }
@@ -204,9 +214,9 @@ function reset_subject(){
     </script>
   </head>
   <body onload="reload_data()">
-    <h1>Plannification JDR</h1>
+    <h1>Planification JDR</h1>
     <p>
-      <a href="view.html">Retour à la vue d'ensemble</a>
+      <a href="view.html" id="back-link">Retour à la vue d'ensemble</a>
       <input name="test" value="Recharger" type="button" onclick="reload_data()">
       <img id="reload-spinner" class="spinner" src="spinner.svg" style="display: none">
     </p>

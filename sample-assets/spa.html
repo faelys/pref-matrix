@@ -27,12 +27,22 @@ window.onerror = function(msg, url, line) {
   item.scrollIntoView();
 }
 
+function pathname_to_topic(str) {
+  var components = str.split("/");
+  var fileName = components[components.length - 1];
+  var lastDotIndex = fileName.lastIndexOf('.');
+  var basename = lastDotIndex !== -1 ? fileName.substring(0, lastDotIndex) : fileName;
+  return basename;
+}
+
+var topic=pathname_to_topic(window.location.pathname);
+
 /************************************/
 /* Asynchronous Push of Preferences */
 /************************************/
 
 async function send(){
-  var req_body = "sub=" + encodeURIComponent(send_subject);
+  var req_body = "topic=" + encodeURIComponent(topic) + "&sub=" + encodeURIComponent(send_subject);
   sent = outbox.get(send_subject);
   outbox.delete(send_subject);
 
@@ -40,14 +50,12 @@ async function send(){
     req_body += "&" + encodeURIComponent(key) + "=" + encodeURIComponent(value);
   }
 
-  console.log("Start fetch");
   const response = await fetch("do/set-pref", {
     method: "POST",
     cache: "no-store",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: req_body,
   });
-  console.log("End of fetch");
 
   var to = base_timeout;
 
@@ -230,6 +238,7 @@ function redisplay() {
 
     document.getElementById("overview-table").style = "";
     document.getElementById("subject-name-label").style = "display:inline";
+    document.getElementById("create-subject").style = "";
     document.getElementById("create-subject-name").type = "text";
     document.getElementById("create-subject-name").value = "";
 
@@ -264,7 +273,7 @@ function redisplay() {
 
 async function reload_data(){
   document.getElementById("reload-spinner").style = "display:inline";
-  const response = await fetch("all.json", { cache: "no-cache" });
+  const response = await fetch(topic + ".json", { cache: "no-cache" });
   all_data = await response.json();
 
   redisplay();
@@ -279,8 +288,8 @@ async function create_subject(){
     method: "POST",
     cache: "no-store",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: "name=" + encodeURIComponent(name),
-  });
+    body: "topic=" + encodeURIComponent(topic) + "&name=" + encodeURIComponent(name),
+  }) ;
   document.getElementById("create-subject-name").value = "";
   document.getElementById("create-spinner").style = "display:none";
 
@@ -309,7 +318,7 @@ function close_change_form(){
 function open_change_form(){
   document.getElementById("new-subject").value = "";
   document.getElementById("change-subject-form").style = "display:block";
-  document.getElementById("close-subject").style = "display:inline";
+  document.getElementById("close-subject").style = subject && "display:inline" || "display:none";
   document.getElementById("cur-subject").style = "display:none";
   document.getElementById("new-subject").style = "display:inline";
   document.getElementById("open-subject").style = "display:none";
